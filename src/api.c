@@ -1,5 +1,15 @@
 #include "httpHandler.h"
 
+int serverSocket, dbSocket;
+
+// For profiling even if the server closes from a ctrl+c signal
+void sigIntHandler(int signum) {
+    printf("{ Caught signal %d }\n", signum);
+    close(dbSocket);
+    close(serverSocket);
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         printf("Usage: %s <port> <database port>\n", argv[0]);
@@ -10,14 +20,15 @@ int main(int argc, char* argv[]) {
     const int DB_PORT = atoi(argv[2]);
 
     log("{ connecting to db }\n");
-    int dbSocket = connectToDb(DB_PORT);
+    dbSocket = connectToDb(DB_PORT);
     if (dbSocket == ERROR) {
         log("{ Error connecting to db }\n");
         return ERROR;
     }
     log("connected to db on port %d\n", DB_PORT);
 
-    int serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
+    serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
+    signal(SIGINT, sigIntHandler);
     log("{ Server is running(%d) }\n", serverSocket);
     log("{ Listening on port %d }\n", SERVER_PORT);
     log("{ FD_SETSIZE: %d }\n", FD_SETSIZE);

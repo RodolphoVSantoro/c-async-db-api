@@ -17,8 +17,6 @@
 #define RESPONSE_SIZE 16 * 1024
 // 8KB
 #define RESPONSE_BODY_SIZE 8 * 1024
-// 4KB
-#define RESPONSE_BODY_TRANSACTIONS_SIZE 4 * 1024
 
 #ifdef LOGGING
 #define logRequest(request, requestSize)    \

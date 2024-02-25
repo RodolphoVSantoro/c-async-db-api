@@ -1,5 +1,15 @@
 #include "dbHandler.h"
 
+int serverSocket;
+
+// For profiling even if the server closes from a ctrl+c signal
+void sigIntHandler(int signum) {
+    printf("{ Caught signal %d }\n", signum);
+    closeDBFiles();
+    close(serverSocket);
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         printf("Usage: %s <port>\n", argv[0]);
@@ -21,7 +31,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     log("{ Starting up server }\n");
-    int serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
+    serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
+    signal(SIGINT, sigIntHandler);
     log("{ Server is running(%d) }\n", serverSocket);
     log("{ Listening on port %d }\n", SERVER_PORT);
     log("{ FD_SETSIZE: %d }\n", FD_SETSIZE);
@@ -58,7 +69,7 @@ int main(int argc, char* argv[]) {
                     int bytesRead = recv(clientSocket, request, sizeof(request), SEND_DEFAULT);
                     bool shouldClose = true;
 
-                    if (bytesRead >= 1 || bytesRead < SOCKET_READ_SIZE) {
+                    if (bytesRead >= 1 && bytesRead < SOCKET_READ_SIZE) {
                         request[bytesRead] = '\0';
                         int sentResult = handleRequest(request, bytesRead, clientSocket);
                         if (sentResult == ERROR) {

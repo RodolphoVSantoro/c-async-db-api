@@ -14,7 +14,6 @@
 #define RESET_DB 1
 
 // Open file modes
-#define READ_BINARY "rb"
 #define WRITE_BINARY "wb"
 #define READ_WRITE_BINARY "rb+"
 
@@ -64,7 +63,7 @@ int addTransaction(User* user, Transaction* transaction);
 // Returns ERROR if the user doesn't have enough limit
 int addSaldo(User* user, Transaction* transaction);
 
-// Closes all the files
+// Closes all the open files
 void closeDBFiles();
 
 #define MAX_USERS 10
@@ -113,7 +112,8 @@ int getUserFile(int id, int* fileNo, FILE** file) {
         errIfNull(userFiles[id]);
         userFileNo[id] = fileno(userFiles[id]);
     } else {
-        fseek(userFiles[id], 0, SEEK_SET);
+        int seekResult = fseek(userFiles[id], 0, SEEK_SET);
+        raiseIfError(seekResult);
     }
     *file = userFiles[id];
     *fileNo = userFileNo[id];
@@ -138,8 +138,10 @@ int writeUser(User* user) {
     }
     int lockResult = flock(fpTotalsFileDescriptor, LOCK_EX);
     raiseIfError(lockResult);
-    fwrite(user, sizeof(User), 1, fpTotals);
-    fflush(fpTotals);
+    int writeResult = fwrite(user, sizeof(User), 1, fpTotals);
+    raiseIfError(writeResult);
+    int flushResult = fflush(fpTotals);
+    raiseIfError(flushResult);
     int release = flock(fpTotalsFileDescriptor, LOCK_UN);
     raiseIfError(release);
     return SUCCESS;
@@ -187,10 +189,13 @@ int updateUserWithTransaction(int id, Transaction* transaction, User* user) {
 
     if (transactionResult == 0) {
         // Go back to the beginning of the file, because fread moved the cursor
-        fseek(fpTotals, 0, SEEK_SET);
-        fwrite(user, sizeof(User), 1, fpTotals);
+        int seekResult = fseek(fpTotals, 0, SEEK_SET);
+        raiseIfError(seekResult);
+        int writeResult = fwrite(user, sizeof(User), 1, fpTotals);
+        raiseIfError(writeResult);
     }
-    fflush(fpTotals);
+    int flushResult = fflush(fpTotals);
+    raiseIfError(flushResult);
     int release = flock(fpTotalsFileDescriptor, LOCK_UN);
     raiseIfError(release);
     return transactionResult;

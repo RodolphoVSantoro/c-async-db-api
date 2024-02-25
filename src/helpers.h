@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -20,7 +21,7 @@
 #include <time.h>
 #include <unistd.h>
 
-// Comment out to enable logging
+// Comment out to enable logging on the server and the db
 // #define LOGGING 1
 
 // Debug flags
@@ -189,68 +190,17 @@ int clientRequest(int clientSocket, const char* request, int requestSize, char* 
     return bytesRead;
 }
 
+// never do this in production
+// it's faster to memcpy and send it over the network
+// but when dealing with different machines and operating systems
+// it's better to serialize the data manually
 int serializeUser(User* user, char* serializedUser) {
-    int offset = 0;
-    toBin(user->id, serializedUser);
-    offset += 4;
-    toBin(user->limit, &serializedUser[offset]);
-    offset += 4;
-    toBin(user->total, &serializedUser[offset]);
-    offset += 4;
-    toBin(user->nTransactions, &serializedUser[offset]);
-    offset += 4;
-    toBin(user->oldestTransaction, &serializedUser[offset]);
-    offset += 4;
-    for (int i = 0; i < user->nTransactions; i++) {
-        toBin(user->transactions[i].valor, &serializedUser[offset]);
-        offset += 4;
-        serializedUser[offset] = user->transactions[i].tipo;
-        offset += 1;
-        for (int j = 0; j < DESCRIPTION_SIZE; j++) {
-            serializedUser[offset] = user->transactions[i].descricao[j];
-            offset += 1;
-        }
-        for (int j = 0; j < DATE_SIZE; j++) {
-            serializedUser[offset] = user->transactions[i].realizada_em[j];
-            offset += 1;
-        }
-    }
-    return offset;
+    memcpy(serializedUser, user, sizeof(User));
+    return sizeof(User);
 }
 
 void deserializeUser(char* serializedUser, User* user) {
-    char* idBin = &serializedUser[0];
-    char* limitBin = &serializedUser[4];
-    char* totalBin = &serializedUser[8];
-    char* nTransactionsBin = &serializedUser[12];
-    char* oldestTransactionBin = &serializedUser[16];
-    int offset = 20;
-
-    user->id = fromBin(idBin);
-    user->limit = fromBin(limitBin);
-    user->total = fromBin(totalBin);
-    user->nTransactions = fromBin(nTransactionsBin);
-    user->oldestTransaction = fromBin(oldestTransactionBin);
-
-    for (int i = 0; i < user->nTransactions; i++) {
-        char* valorBin = &serializedUser[offset];
-        user->transactions[i].valor = fromBin(valorBin);
-        offset += 4;
-
-        char tipo = serializedUser[offset];
-        user->transactions[i].tipo = tipo;
-        offset += 1;
-
-        for (int j = 0; j < DESCRIPTION_SIZE; j++) {
-            user->transactions[i].descricao[j] = serializedUser[offset];
-            offset += 1;
-        }
-
-        for (int j = 0; j < DATE_SIZE; j++) {
-            user->transactions[i].realizada_em[j] = serializedUser[offset];
-            offset += 1;
-        }
-    }
+    memcpy(user, serializedUser, sizeof(User));
 }
 
 #endif

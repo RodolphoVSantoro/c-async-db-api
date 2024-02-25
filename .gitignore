@@ -37,10 +37,10 @@
 *.hex
 out
 resetDb
-server
-db
 rinha-backend-2024
 rinha-db-2024
+server/server
+db/db
 
 # Debug files
 *.dSYM/
@@ -65,3 +65,8 @@ data/
 
 #test results
 **/results
+
+#profiling
+**/profiling
+**/.python-version
+**/gmon.out
