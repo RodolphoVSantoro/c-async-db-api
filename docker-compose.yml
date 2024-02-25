@@ -11,8 +11,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "125MB"
+          cpus: "0.15"
+          memory: "75MB"
   api1:
     <<: *app
     command: "./rinha-backend-2024 3000 5000"
@@ -38,5 +38,5 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.75"
-          memory: "175MB"
+          cpus: "1.05"
+          memory: "325MB"
