@@ -19,11 +19,11 @@
 ---
 ### Descrição
 
-Esse projeto foi feito pensando em comparar como uma aplicação simples em C com arquivos binários e locks como **"banco de dados"**, sem uso de nenhuma lib externa ou algum banco, se comportaria em relação as outras submissões.
+Fork do projeto https://github.com/RodolphoVSantoro/c-async-disk-api
 
-Também foi minha primeira vez trabalhando com async em C, é um repositório interessante para quem tem curiosidade de ver como funciona(usei o select, mas existem também o poll e o epoll que são melhores).
+Leia a descrição da submissão do original para mais detalhes
 
-Mas por favor, nunca usem o código fonte nesse repositório para se basearem em uma aplicação C em produção. Muitas validações e garantias foram deixadas de lado para simplificar o código. Além disso, sou longe de ser um especialista em network programming em C.
+A principal mudança do fork, é que agora o projeto roda uma api separada que funciona como um db, em vez de acessar o disco diretamente.
 
 ---
 
@@ -44,7 +44,7 @@ Mas por favor, nunca usem o código fonte nesse repositório para se basearem em
 
 - [RodolphoVSantoro](https://github.com/RodolphoVSantoro) (@github)
 - [Rodolphovs](https://gitlab.com/Rodolphovs) (@gitlab)
-- [Source Code](https://github.com/RodolphoVSantoro/c-async-disk-api) (@github)
+- [Source Code](https://github.com/RodolphoVSantoro/c-async-db-api) (@github)
 
 ---
 
