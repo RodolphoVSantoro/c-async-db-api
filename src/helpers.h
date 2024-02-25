@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
+#include <sys/select.h>
 #include <unistd.h>
 
 // Comment out to enable logging on the server and the db
