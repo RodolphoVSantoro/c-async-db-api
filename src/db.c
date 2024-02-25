@@ -33,6 +33,7 @@ int main(int argc, char* argv[]) {
     log("{ Starting up server }\n");
     serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
     signal(SIGINT, sigIntHandler);
+    signal(SIGTERM, sigIntHandler);
     log("{ Server is running(%d) }\n", serverSocket);
     log("{ Listening on port %d }\n", SERVER_PORT);
     log("{ FD_SETSIZE: %d }\n", FD_SETSIZE);
