@@ -3,6 +3,7 @@ output=server
 release_output=rinha-backend-2024
 compiler=gcc
 warn=-Wall -Wextra -Werror -pedantic
+libs=-pthread
 flags=-std=gnu99
 debug=-fsanitize=address -g
 release=-O3
@@ -17,10 +18,10 @@ override DB_PORT = 5000
 endif
 
 build:
-	$(compiler) -o $(output) $(flags) $(debug) $(warn) $(main)
+	$(compiler) -o $(output) $(flags) $(libs) $(debug) $(warn) $(main)
 
 build-release: $(main) $(headers)
-	$(compiler) -o $(release_output) $(flags) $(warn) $(release) $(main)
+	$(compiler) -o $(release_output) $(flags) $(libs) $(warn) $(release) $(main)
 
 run:
 	./$(output) $(PORT) $(DB_PORT)
@@ -29,7 +30,7 @@ run-release:
 	./$(release_output) $(PORT) $(DB_PORT)
 
 profile:
-	$(compiler) -o $(output) $(flags) $(profiling) $(warn) $(main)
+	$(compiler) -o $(output) $(flags) $(libs) $(profiling) $(warn) $(main)
 	./$(output) $(PORT) $(DB_PORT)
 
 profile-image:

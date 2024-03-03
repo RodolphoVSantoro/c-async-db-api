@@ -79,8 +79,10 @@ int setupServer(short port, int backlog) {
 }
 
 int handleRequest(char* request, int requestSize, int clientSocket, int dbSocket) {
+#ifdef LOGGING
     char reqTime[DATE_SIZE];
     getCurrentTimeStr(reqTime);
+#endif
 
     log("{ %s - Received:", reqTime);
     log(LOG_SEPARATOR);

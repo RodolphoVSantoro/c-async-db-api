@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -16,10 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
-#include <sys/select.h>
 #include <unistd.h>
 
 // Comment out to enable logging on the server and the db
@@ -115,6 +116,13 @@ typedef struct USER {
     Transaction transactions[MAX_TRANSACTIONS];
 } User;
 
+#define Q_SIZE (2048)
+
+typedef struct Queue {
+    int first, last, currentSize;
+    int content[Q_SIZE];
+} Queue;
+
 // Check socket errors
 // Crash the program if the expression evaluates to ERROR
 int check(int expression, const char* message);
@@ -161,10 +169,21 @@ int partialEqual(const char* str1, const char* str2, int maxLength) {
     return true;
 }
 
+char cachedTimeStr[DATE_SIZE];
+time_t cachedTime = 0;
+
 void getCurrentTimeStr(char* timeStr) {
-    time_t mytime = time(NULL);
-    char* time_str = ctime(&mytime);
+    time_t myTime = time(NULL);
+    if (myTime == cachedTime) {
+        strcpy(timeStr, cachedTimeStr);
+        return;
+    }
+    char* time_str = ctime(&myTime);
+
+    cachedTime = myTime;
     time_str[strlen(time_str) - 1] = '\0';
+
+    strcpy(cachedTimeStr, time_str);
     strcpy(timeStr, time_str);
 }
 
@@ -202,6 +221,42 @@ int serializeUser(User* user, char* serializedUser) {
 
 void deserializeUser(char* serializedUser, User* user) {
     memcpy(user, serializedUser, sizeof(User));
+}
+
+void initQueue(Queue* q) {
+    q->first = q->last = 0;
+    q->currentSize = 0;
+    memset(q->content, 0, sizeof(q->content));
+}
+
+int isFull(Queue* q) {
+    return q->currentSize == Q_SIZE - 1;
+}
+
+int isEmpty(Queue* q) {
+    return q->currentSize == 0;
+}
+
+int enqueue(Queue* q, int value) {
+    if (isFull(q)) {
+        return ERROR;
+    }
+    q->content[q->last] = value;
+
+    q->last = (q->last + 1) % Q_SIZE;
+    q->currentSize++;
+
+    return SUCCESS;
+}
+
+int dequeue(Queue* q, int* value) {
+    if (isEmpty(q)) {
+        return ERROR;
+    }
+    *value = q->content[q->first];
+    q->first = (q->first + 1) % Q_SIZE;
+    q->currentSize--;
+    return SUCCESS;
 }
 
 #endif
