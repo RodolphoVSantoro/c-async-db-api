@@ -2,11 +2,22 @@
 
 int serverSocket;
 
+char* responseBuffers[FD_SETSIZE];
+char* requestBuffers[FD_SETSIZE];
+
+void cleanup() {
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        free(responseBuffers[i]);
+        free(requestBuffers[i]);
+    }
+    closeDBFiles();
+    close(serverSocket);
+}
+
 // For profiling even if the server closes from a ctrl+c signal
 void sigIntHandler(int signum) {
     printf("{ Caught signal %d }\n", signum);
-    closeDBFiles();
-    close(serverSocket);
+    cleanup();
     exit(EXIT_SUCCESS);
 }
 
@@ -47,12 +58,25 @@ int main(int argc, char* argv[]) {
 
     FD_ZERO(&currentWriteSockets);
 
-    char responseBuffers[FD_SETSIZE][RESPONSE_SIZE] = {0};
-    int responseSize[FD_SETSIZE] = {0};
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        responseBuffers[i] = (char*)malloc(sizeof(char) * RESPONSE_SIZE);
+        if (responseBuffers[i] == NULL) {
+            printf("Failed to allocate memory for responseBuffers[%d]\n", i);
+            return ERROR;
+        }
+        memset(responseBuffers[i], 0, RESPONSE_SIZE * sizeof(char));
+        requestBuffers[i] = (char*)malloc(sizeof(char) * SOCKET_READ_SIZE);
+        if (requestBuffers[i] == NULL) {
+            printf("Failed to allocate memory for responseBuffers[%d]\n", i);
+            return ERROR;
+        }
+        memset(requestBuffers[i], 0, SOCKET_READ_SIZE * sizeof(char));
+    }
 
-    char requestBuffers[FD_SETSIZE][SOCKET_READ_SIZE] = {0};
+    int responseSize[FD_SETSIZE] = {0};
     char requestRead[FD_SETSIZE] = {0};
     int requestSize[FD_SETSIZE] = {0};
+    bool shouldClose[FD_SETSIZE] = {0};
 
     while (true) {
         readyReadSockets = currentReadSockets;
@@ -78,9 +102,8 @@ int main(int argc, char* argv[]) {
                 continue;
             }
             int clientSocket = socket;
-            bool shouldClose = false;
             bool readRequest = requestRead[clientSocket];
-            if (readRequest == 0 && FD_ISSET(clientSocket, &readyReadSockets)) {
+            if (readRequest == 0 && shouldClose[clientSocket] == false && FD_ISSET(clientSocket, &readyReadSockets)) {
                 // Read client request
                 int bytesRead = recv(clientSocket, requestBuffers[clientSocket], sizeof(requestBuffers[clientSocket]), SEND_DEFAULT);
                 log("{ Read request from client %d }\n", clientSocket);
@@ -91,7 +114,7 @@ int main(int argc, char* argv[]) {
                     requestSize[clientSocket] = bytesRead;
                     // client requested to close connection
                     if (requestBuffers[clientSocket][0] == '0') {
-                        shouldClose = true;
+                        shouldClose[clientSocket] = true;
                     } else {
                         requestRead[clientSocket] = 1;
                         int result = handleRequest(
@@ -104,16 +127,16 @@ int main(int argc, char* argv[]) {
                             continue;
                         } else {
                             log("{ Client closed connection }\n");
-                            shouldClose = true;
+                            shouldClose[clientSocket] = true;
                         }
                     }
                 } else if (bytesRead == 0) {
                     log("{ Client closed }\n");
-                    shouldClose = true;
+                    shouldClose[clientSocket] = true;
                 }
                 continue;
             }
-            if (readRequest == 1 && shouldClose == false && FD_ISSET(clientSocket, &readyWriteSockets)) {
+            if (readRequest == 1 && shouldClose[clientSocket] == false && FD_ISSET(clientSocket, &readyWriteSockets)) {
                 int sentResult = send(clientSocket, responseBuffers[clientSocket], responseSize[clientSocket], SEND_DEFAULT);
                 if (sentResult == ERROR) {
                     log("{ Error sending response }\n");
@@ -125,17 +148,17 @@ int main(int argc, char* argv[]) {
                 }
                 requestRead[clientSocket] = 0;
                 FD_CLR(clientSocket, &currentWriteSockets);
-                shouldClose = true;
+                shouldClose[clientSocket] = true;
                 continue;
             }
 
-            if (shouldClose) {
+            if (shouldClose[clientSocket]) {
+                shouldClose[clientSocket] = false;
                 log("{ Client closed connection }\n");
                 close(clientSocket);
             }
         }
     }
-    closeDBFiles();
-    close(serverSocket);
+    cleanup();
     return EXIT_SUCCESS;
 }

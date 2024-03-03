@@ -136,14 +136,10 @@ int writeUser(User* user) {
     if (getFileResult != SUCCESS) {
         return getFileResult;
     }
-    int lockResult = flock(fpTotalsFileDescriptor, LOCK_EX);
-    raiseIfError(lockResult);
     int writeResult = fwrite(user, sizeof(User), 1, fpTotals);
     raiseIfError(writeResult);
     int flushResult = fflush(fpTotals);
     raiseIfError(flushResult);
-    int release = flock(fpTotalsFileDescriptor, LOCK_UN);
-    raiseIfError(release);
     return SUCCESS;
 }
 
@@ -155,13 +151,9 @@ int readUser(User* user, int id) {
         return getFileResult;
     }
 
-    int lockResult = flock(fpTotalsFileDescriptor, LOCK_SH);
-    raiseIfError(lockResult);
     int readResult = fread(user, sizeof(User), 1, fpTotals);
     raiseIfError(readResult);
-    int release = flock(fpTotalsFileDescriptor, LOCK_UN);
 
-    raiseIfError(release);
     return SUCCESS;
 }
 
@@ -180,8 +172,6 @@ int updateUserWithTransaction(int id, Transaction* transaction, User* user) {
         return getFileResult;
     }
 
-    int lockResult = flock(fpTotalsFileDescriptor, LOCK_EX);
-    raiseIfError(lockResult);
     int readResult = fread(user, sizeof(User), 1, fpTotals);
     raiseIfError(readResult);
 
@@ -196,8 +186,6 @@ int updateUserWithTransaction(int id, Transaction* transaction, User* user) {
     }
     int flushResult = fflush(fpTotals);
     raiseIfError(flushResult);
-    int release = flock(fpTotalsFileDescriptor, LOCK_UN);
-    raiseIfError(release);
     return transactionResult;
 }
 

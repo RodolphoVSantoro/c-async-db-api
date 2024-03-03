@@ -11,7 +11,7 @@
 // server port
 // #define SERVER_PORT 9999
 // max connections waiting to be accepted
-#define SERVER_BACKLOG 1000
+#define SERVER_BACKLOG 2000
 // 8KB
 #define SOCKET_READ_SIZE 8 * 1024
 // 16KB

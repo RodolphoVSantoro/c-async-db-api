@@ -11,12 +11,12 @@
 // #define SERVER_PORT 9999
 // max connections waiting to be accepted
 #define SERVER_BACKLOG 1000
-// 1KB
-#define SOCKET_READ_SIZE 1024
-// 1KB
-#define RESPONSE_SIZE 1024
-// 1KB
-#define RESPONSE_BODY_SIZE 1024
+// 8KB
+#define SOCKET_READ_SIZE 8 * 1024
+// 8KB
+#define RESPONSE_SIZE 8 * 1024
+// 8KB
+#define RESPONSE_BODY_SIZE 8 * 1024
 
 #ifdef LOGGING
 #define logRequest(request, requestSize)    \
