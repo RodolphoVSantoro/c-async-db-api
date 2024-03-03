@@ -39,55 +39,85 @@ int main(int argc, char* argv[]) {
     log("{ FD_SETSIZE: %d }\n", FD_SETSIZE);
 
     // Set of socket descriptors
-    fd_set currentSockets, readySockets;
+    fd_set currentReadSockets, currentWriteSockets, readyReadSockets, readyWriteSockets;
 
     // Initialize the set of active sockets
-    FD_ZERO(&currentSockets);
-    FD_SET(serverSocket, &currentSockets);
+    FD_ZERO(&currentReadSockets);
+    FD_SET(serverSocket, &currentReadSockets);
+
+    FD_ZERO(&currentWriteSockets);
+
+    char responseBuffers[FD_SETSIZE][RESPONSE_SIZE] = {0};
+    int responseSize[FD_SETSIZE] = {0};
+
+    char requestBuffers[FD_SETSIZE][SOCKET_READ_SIZE] = {0};
+    char requestRead[FD_SETSIZE] = {0};
+    int requestSize[FD_SETSIZE] = {0};
 
     while (true) {
-        readySockets = currentSockets;
+        readyReadSockets = currentReadSockets;
+        readyWriteSockets = currentWriteSockets;
 
         // Wait for an activity on one of the sockets
-        if (select(FD_SETSIZE, &readySockets, NULL, NULL, NULL) < 0) {
+        if (select(FD_SETSIZE, &readyReadSockets, &readyWriteSockets, NULL, NULL) < 0) {
             printf("Select failed");
             return ERROR;
         }
 
+        if (FD_ISSET(serverSocket, &readyReadSockets)) {
+            struct sockaddr_in clientAddress;
+            socklen_t clientAddressSize = sizeof(clientAddress);
+            int clientSocket = accept(serverSocket, (SA*)&clientAddress, &clientAddressSize);
+            FD_SET(clientSocket, &currentReadSockets);
+        }
+
         // Check all sockets for activity
         for (int socket = 0; socket < FD_SETSIZE; socket++) {
-            if (FD_ISSET(socket, &readySockets)) {
-                // Accept new connection
-                if (socket == serverSocket) {
-                    struct sockaddr_in clientAddress;
-                    socklen_t clientAddressSize = sizeof(clientAddress);
-                    int clientSocket = accept(serverSocket, (SA*)&clientAddress, &clientAddressSize);
-                    FD_SET(clientSocket, &currentSockets);
-                } else {
-                    // Handle client request
-                    int clientSocket = socket;
-                    char request[SOCKET_READ_SIZE];
-                    int bytesRead = recv(clientSocket, request, sizeof(request), SEND_DEFAULT);
-                    bool shouldClose = true;
-
-                    if (bytesRead >= 1 && bytesRead < SOCKET_READ_SIZE) {
-                        request[bytesRead] = '\0';
-                        int sentResult = handleRequest(request, bytesRead, clientSocket);
-                        if (sentResult == ERROR) {
-                            log("{ Error sending response }\n");
-                        } else if (sentResult != END_CONNECTION) {
-                            // Keep the connection open if the client didn't ask to close it
-                            shouldClose = false;
-                            log("{ Request handled }\n");
-                        }
-                    }
-
-                    if (shouldClose) {
-                        log("{ Client closed connection }\n");
-                        close(clientSocket);
-                        FD_CLR(clientSocket, &currentSockets);
+            if (socket == serverSocket) {
+                continue;
+            }
+            int clientSocket = socket;
+            bool shouldClose = false;
+            bool readRequest = requestRead[clientSocket];
+            if (readRequest == 0 && FD_ISSET(clientSocket, &readyReadSockets)) {
+                // Read client request
+                int bytesRead = recv(clientSocket, requestBuffers[clientSocket], sizeof(requestBuffers[clientSocket]), SEND_DEFAULT);
+                log("{ Read request from client %d }\n", clientSocket);
+                logRequest(requestBuffers[clientSocket], bytesRead);
+                if (bytesRead >= 1 && bytesRead < SOCKET_READ_SIZE) {
+                    FD_CLR(clientSocket, &currentReadSockets);
+                    requestBuffers[clientSocket][bytesRead] = '\0';
+                    requestSize[clientSocket] = bytesRead;
+                    // client requested to close connection
+                    if (requestBuffers[clientSocket][0] == '0') {
+                        shouldClose = true;
+                    } else {
+                        requestRead[clientSocket] = 1;
+                        handleRequest(
+                            requestBuffers[clientSocket],
+                            requestSize[clientSocket],
+                            responseBuffers[clientSocket],
+                            &responseSize[clientSocket]);
+                        FD_SET(clientSocket, &currentWriteSockets);
+                        continue;
                     }
                 }
+            }
+            if (readRequest == 1 && FD_ISSET(clientSocket, &readyWriteSockets)) {
+                int sentResult = send(clientSocket, responseBuffers[clientSocket], responseSize[clientSocket], SEND_DEFAULT);
+                if (sentResult == ERROR) {
+                    log("{ Error sending response }\n");
+                } else {
+                    log("{ Request handled }\n");
+                }
+                requestRead[clientSocket] = 0;
+                FD_CLR(clientSocket, &currentWriteSockets);
+                FD_SET(clientSocket, &currentReadSockets);
+            }
+
+            if (shouldClose) {
+                log("{ Client closed connection }\n");
+                close(clientSocket);
             }
         }
     }

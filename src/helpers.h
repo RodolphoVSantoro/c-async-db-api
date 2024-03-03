@@ -16,14 +16,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
-#include <sys/select.h>
 #include <unistd.h>
 
 // Comment out to enable logging on the server and the db
-// #define LOGGING 1
+#define LOGGING 1
 
 // Debug flags
 #ifdef LOGGING
@@ -85,6 +85,15 @@ const char unprocessableEntityResponse[] = "HTTP/1.1 422 Unprocessable Entity\nC
 
 const char internalServerErrorResponse[] = "HTTP/1.1 500 Internal Server Error\nContent-Type: application/json\n\n{\"message\": \"Internal Server Error\"}";
 #define INTERNAL_SERVER_ERROR(clientSocket) STATIC_RESPONSE(clientSocket, internalServerErrorResponse)
+
+#define RESPOND_ASYNC(responseBuffer, response, responseReady) \
+    strcpy(responseBuffer, response);                          \
+    *responseReady = 1;
+#define BAD_REQUEST_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, badRequestResponse, responseReady)
+#define METHOD_NOT_ALLOWED_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, methodNotAllowedResponse, responseReady)
+#define NOT_FOUND_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, notFoundResponse, responseReady)
+#define UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, unprocessableEntityResponse, responseReady)
+#define INTERNAL_SERVER_ERROR_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, internalServerErrorResponse, responseReady)
 
 // HTTP methods
 const char GET_METHOD[] = "GET";

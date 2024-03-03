@@ -15,7 +15,7 @@
 // 8KB
 #define SOCKET_READ_SIZE 8 * 1024
 // 16KB
-#define RESPONSE_SIZE 16 * 1024
+#define RESPONSE_SIZE 4 * 1024
 // 8KB
 #define RESPONSE_BODY_SIZE 8 * 1024
 // 256B
@@ -27,15 +27,21 @@
 #define SEND_DEFAULT 0
 #define PROTOCOL_DEFAULT 0
 
+typedef enum HttpMethod {
+    UNSET = 0,
+    GET = 1,
+    POST = 2,
+} HttpMethod;
+
 // Startup server socket on the given port, with the max number of connections waiting to be accepted set to backlog
 // Crash the program if the socket creation or binding fails
 int setupServer(short port, int backlog);
 
-// Handles the request and sends the response to the clientSocket
-int handleRequest(char* request, int requestSize, int clientSocket, int dbSocket);
+// Deserializes client request, serializes db request
+int deserializeClientRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, HttpMethod* requestMethod, char responseBuffer[], char* responseReady);
 
-// Handles any GET request, assuming all GET requests are for the bank statement endpoint
-int handleGetRequest(int clientSocket, int dbSocket, char* request, int requestSize);
+// Deserializes client request, serializes db request
+int deserializeGetRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, char responseBuffer[], char* responseReady);
 // Assuming the request is "GET /clientes/1/..." id is on the 14th position
 // Returns ERROR if the request is invalid
 // Returns the id if the request is valid
@@ -43,8 +49,8 @@ int getIdFromGETRequest(const char* request, int requestLength);
 // Serializes GET bank statement response into json and writes it to response
 void serializeGetResponse(User* user, char* response);
 
-// Handles any POST request, assuming all POST requests are for creating transactions
-int handlePostRequest(int clientSocket, int dbSocket, char* request, int requestSize);
+// Deserializes client request, serializes db request
+int deserializePostRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, char responseBuffer[], char* responseReady);
 // Assuming the request is "POST /clientes/1/..." id is on the 15th position
 // Returns ERROR if the request is invalid
 // Returns the id if the request is valid
@@ -78,9 +84,11 @@ int setupServer(short port, int backlog) {
     return serverSocket;
 }
 
-int handleRequest(char* request, int requestSize, int clientSocket, int dbSocket) {
+int deserializeClientRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, HttpMethod* requestMethod, char responseBuffer[], char* responseReady) {
+#ifdef LOGGING
     char reqTime[DATE_SIZE];
     getCurrentTimeStr(reqTime);
+#endif
 
     log("{ %s - Received:", reqTime);
     log(LOG_SEPARATOR);
@@ -91,45 +99,118 @@ int handleRequest(char* request, int requestSize, int clientSocket, int dbSocket
     // "GET" alone has 3 bytes, so we need at least 4 bytes to consume a request
     if (requestSize < 4) {
         log("[ Unprocessable Entity ]\n");
-        return UNPROCESSABLE_ENTITY(clientSocket);
+        UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady);
+        return SUCCESS;
     }
 
-    bool isGet = partialEqual(request, GET_METHOD, GET_METHOD_LENGTH);
-    if (isGet) {
-        return handleGetRequest(clientSocket, dbSocket, request, requestSize);
+    if (partialEqual(request, GET_METHOD, GET_METHOD_LENGTH)) {
+        *requestMethod = GET;
+        return deserializeGetRequest(request, requestSize, dbRequestBuffer, dbRequestSize, responseBuffer, responseReady);
     }
-
-    bool isPost = partialEqual(request, POST_METHOD, POST_METHOD_LENGTH);
-    if (isPost) {
-        return handlePostRequest(clientSocket, dbSocket, request, requestSize);
+    if (partialEqual(request, POST_METHOD, POST_METHOD_LENGTH)) {
+        *requestMethod = POST;
+        return deserializePostRequest(request, requestSize, dbRequestBuffer, dbRequestSize, responseBuffer, responseReady);
     }
 
     log("[ Method not allowed ]\n");
-    return METHOD_NOT_ALLOWED(clientSocket);
+    METHOD_NOT_ALLOWED_ASYNC(responseBuffer, responseReady);
+    return SUCCESS;
 }
 
-int handleGetRequest(int clientSocket, int dbSocket, char* request, int requestSize) {
+// Deserializes client request, serializes db request
+int deserializeGetRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, char responseBuffer[], char* responseReady) {
     // get id from request path
     int id = getIdFromGETRequest(request, requestSize);
     if (id == ERROR) {
-        log("[ NOT_FOUND - over 9 ]\n");
-        return NOT_FOUND(clientSocket);
+        log("[ NOT_FOUND - id over 9 ]\n");
+        NOT_FOUND_ASYNC(responseBuffer, responseReady);
     }
 
-    // get user from db by id
+    dbRequestBuffer[0] = 'r';
+    dbRequestBuffer[1] = ' ';
+    if (id > 9) {
+        return ERROR;
+    }
+    dbRequestBuffer[2] = id + '0';
+    dbRequestBuffer[3] = '\0';
+
+    *dbRequestSize = 4;
+
+    return SUCCESS;
+}
+
+// Deserializes client request, serializes db request
+int deserializePostRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, char responseBuffer[], char* responseReady) {
+    // get id from request path
+    int id = getIdFromPOSTRequest(request, requestSize);
+    if (id == ERROR) {
+        log("[ NOT_FOUND - id over 9 ]\n");
+        NOT_FOUND_ASYNC(responseBuffer, responseReady);
+        return SUCCESS;
+    }
+
+    Transaction transaction;
+    int parseResult = getTransactionFromBody(request, &transaction);
+    if (parseResult == ERROR) {
+        log("[ Unprocessable Entity - Failed to get body ]\n");
+        UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady);
+        return SUCCESS;
+    }
+
+    // 'u' id(binNum) tipo('c' ou 'd') valor(binNum) descricao(char[DESCRIPTION_SIZE])
+    dbRequestBuffer[0] = 'u';
+    dbRequestBuffer[1] = ' ';
+
+    char charId = id + '0';
+    dbRequestBuffer[2] = charId;
+    dbRequestBuffer[3] = ' ';
+    dbRequestBuffer[4] = transaction.tipo;
+    dbRequestBuffer[5] = ' ';
+    toBin(transaction.valor, &dbRequestBuffer[6]);
+    dbRequestBuffer[10] = ' ';
+    strcpy(&dbRequestBuffer[11], transaction.descricao);
+
+    *dbRequestSize = 11 + DESCRIPTION_SIZE;
+
+    return SUCCESS;
+}
+
+// Deserializes db response, serializes client response
+int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod requestMethod, char responseBuffer[], char* responseReady) {
+    if (dbResponseSize == -1) {
+        return ERROR;
+    }
+
+    if (dbResponse[0] != '0') {
+        if (requestMethod == GET) {
+            NOT_FOUND_ASYNC(responseBuffer, responseReady);
+        } else {
+            int transactionResult = dbResponse[0] - '0';
+            if (transactionResult == ERROR) {
+                log("[ Internal Server Error - Locking file ]\n");
+                INTERNAL_SERVER_ERROR_ASYNC(responseBuffer, responseReady);
+            } else if (transactionResult == FILE_NOT_FOUND) {
+                log("[ Not Found - User file ]\n");
+                NOT_FOUND_ASYNC(responseBuffer, responseReady);
+            } else if (transactionResult == LIMIT_EXCEEDED_ERROR || transactionResult == INVALID_TIPO_ERROR) {
+                log("[ Unprocessable entity - LIMIT OR TIPO ]\n");
+                UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady);
+            }
+        }
+        return SUCCESS;
+    }
+
     User user;
-    int readResult = readUser(dbSocket, &user, id);
-    if (readResult == ERROR) {
-        log("[ NOT_FOUND - file ]\n");
-        return NOT_FOUND(clientSocket);
+    deserializeUser(&dbResponse[2], &user);
+
+    if (requestMethod == GET) {
+        serializeGetResponse(&user, responseBuffer);
     }
-
-    // serialize user to response
-    char response[RESPONSE_SIZE];
-    serializeGetResponse(&user, response);
-
-    log("[ %s ]\n", response);
-    return RESPOND(clientSocket, response);
+    if (requestMethod == POST) {
+        serializePostResponse(&user, responseBuffer);
+    }
+    log("[ %s ]\n", responseBuffer);
+    return SUCCESS;
 }
 
 int getIdFromGETRequest(const char* request, int requestLength) {
@@ -185,45 +266,6 @@ void serializeGetResponse(User* user, char* response) {
 
     // Write the http response using a success template, with a body
     sprintf(response, successResponseJsonTemplate, body);
-}
-
-int handlePostRequest(int clientSocket, int dbSocket, char* request, int requestSize) {
-    // get id from request path
-    int id = getIdFromPOSTRequest(request, requestSize);
-    if (id == ERROR) {
-        log("[ Not Found - over 9 ]\n");
-        return NOT_FOUND(clientSocket);
-    }
-
-    Transaction transaction;
-    int parseResult = getTransactionFromBody(request, &transaction);
-    if (parseResult == ERROR) {
-        log("[ Unprocessable Entity - Failed to get body ]\n");
-        return UNPROCESSABLE_ENTITY(clientSocket);
-    }
-
-    // update user on db by id
-    User user;
-    int transactionResult = updateUserWithTransaction(dbSocket, id, &transaction, &user);
-
-    if (transactionResult == ERROR) {
-        log("[ Internal Server Error - Locking file ]\n");
-        return INTERNAL_SERVER_ERROR(clientSocket);
-    } else if (transactionResult == FILE_NOT_FOUND) {
-        log("[ Not Found - User file ]\n");
-        return NOT_FOUND(clientSocket);
-    } else if (transactionResult == LIMIT_EXCEEDED_ERROR || transactionResult == INVALID_TIPO_ERROR) {
-        log("[ Unprocessable entity - LIMIT OR TIPO ]\n");
-        return UNPROCESSABLE_ENTITY(clientSocket);
-    }
-
-    // serialize user to response
-    char response[RESPONSE_SIZE];
-    serializePostResponse(&user, response);
-
-    log("[ %s ]\n", response);
-    // send response
-    return RESPOND(clientSocket, response);
 }
 
 int getIdFromPOSTRequest(const char* request, int requestLength) {

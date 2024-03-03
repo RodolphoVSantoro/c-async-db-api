@@ -11,12 +11,12 @@
 // #define SERVER_PORT 9999
 // max connections waiting to be accepted
 #define SERVER_BACKLOG 1000
-// 8KB
-#define SOCKET_READ_SIZE 8 * 1024
-// 16KB
-#define RESPONSE_SIZE 16 * 1024
-// 8KB
-#define RESPONSE_BODY_SIZE 8 * 1024
+// 64B
+#define SOCKET_READ_SIZE 64
+// 64B
+#define RESPONSE_SIZE 64
+// 64B
+#define RESPONSE_BODY_SIZE 64
 
 #ifdef LOGGING
 #define logRequest(request, requestSize)    \
@@ -42,10 +42,7 @@
 int setupServer(short port, int backlog);
 
 // Handles the request and sends the response to the clientSocket
-// Returns END_CONNECTION if the client requests to close the connection
-// Returns SUCCESS if the request was successful
-// Returns ERROR if the request was not successful
-int handleRequest(char* request, int requestSize, int clientSocket);
+int handleRequest(char* request, int requestSize, char responseBuffer[], int* responseSize);
 
 int setupServer(short port, int backlog) {
     int serverSocket;
@@ -69,14 +66,20 @@ int setupServer(short port, int backlog) {
 
 const char requestUnknown[] = "1 - Unknown request\n\n";
 #define REQUEST_UNKNOWN(clientSocket) STATIC_RESPONSE(clientSocket, requestUnknown)
+#define REQUEST_UNKNOWN_ASYNC(responseBuffer, responseReady) RESPOND_ASYNC(responseBuffer, requestUnknown, responseReady)
 
-int handleRequest(char* request, int requestSize, int clientSocket) {
+int handleRequest(char* request, int requestSize, char responseBuffer[], int* responseSize) {
+    char responseReady;
+#ifdef LOGGING
     char reqTime[DATE_SIZE];
     getCurrentTimeStr(reqTime);
+#endif
 
     if (requestSize < 1) {
         log("{ %s - Empty request }\n", reqTime);
-        return REQUEST_UNKNOWN(clientSocket);
+        REQUEST_UNKNOWN_ASYNC(responseBuffer, &responseReady);
+        *responseSize = strlen(requestUnknown);
+        return SUCCESS;
     }
 
     log("{ %s - Received:", reqTime);
@@ -87,13 +90,12 @@ int handleRequest(char* request, int requestSize, int clientSocket) {
 
     // close connection request
     if (request[0] == '0') {
-        send(clientSocket, "0 close", 8, SEND_DEFAULT);
-        return END_CONNECTION;
+        strcpy(responseBuffer, "0 close");
+        *responseSize = 8;
+        return SUCCESS;
     }
 
     bool recognizedMethod = false;
-    char responseBuffer[DB_RESPONSE_SIZE];
-    int bufferLen = 0;
     if (request[0] == 'c') {
         recognizedMethod = true;
         log("[ Create user request ]\n");
@@ -109,7 +111,7 @@ int handleRequest(char* request, int requestSize, int clientSocket) {
         int writeUserResult = writeUser(&user);
 
         responseBuffer[0] = (writeUserResult * -1) + '0';
-        bufferLen = 1;
+        *responseSize = 1;
     }
 
     if (request[0] == 'r') {
@@ -127,10 +129,10 @@ int handleRequest(char* request, int requestSize, int clientSocket) {
 
         responseBuffer[0] = (readResult * -1) + '0';
         responseBuffer[1] = ' ';
-        bufferLen = 2;
+        *responseSize = 2;
         if (readResult == SUCCESS) {
             int userBytes = serializeUser(&user, &responseBuffer[2]);
-            bufferLen += userBytes;
+            *responseSize += userBytes;
         }
     }
 
@@ -149,22 +151,22 @@ int handleRequest(char* request, int requestSize, int clientSocket) {
         int updateUserResult = updateUserWithTransaction(id, &transaction, &user);
         responseBuffer[0] = (updateUserResult * -1) + '0';
         responseBuffer[1] = ' ';
-        bufferLen = 2;
+        *responseSize = 2;
 
         if (updateUserResult == SUCCESS) {
             int userBytes = serializeUser(&user, &responseBuffer[2]);
-            bufferLen += userBytes;
+            *responseSize += userBytes;
         }
     }
 
-    // send response
+    // defer send response
     if (recognizedMethod) {
-        send(clientSocket, responseBuffer, bufferLen, SEND_DEFAULT);
         return SUCCESS;
     }
 
     log("[ Method not allowed ]\n");
-    return REQUEST_UNKNOWN(clientSocket);
+    REQUEST_UNKNOWN_ASYNC(responseBuffer, &responseReady);
+    return SUCCESS;
 }
 
 #endif
