@@ -27,6 +27,8 @@
 #define SEND_DEFAULT 0
 #define PROTOCOL_DEFAULT 0
 
+#define DESERIALIZE_HTTP_ERROR 1
+
 typedef enum HttpMethod {
     UNSET = 0,
     GET = 1,
@@ -37,7 +39,12 @@ typedef enum HttpMethod {
 // Crash the program if the socket creation or binding fails
 int setupServer(short port, int backlog);
 
+// Deserializes db response, serializes client response
+int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod requestMethod, char responseBuffer[], char* responseReady);
+
 // Deserializes client request, serializes db request
+// Returns ERROR if the request has a problem
+// Returns SUCCESS if the request is serialized successfully
 int deserializeClientRequest(char* request, int requestSize, char* dbRequestBuffer, int* dbRequestSize, HttpMethod* requestMethod, char responseBuffer[], char* responseReady);
 
 // Deserializes client request, serializes db request
@@ -124,6 +131,7 @@ int deserializeGetRequest(char* request, int requestSize, char* dbRequestBuffer,
     if (id == ERROR) {
         log("[ NOT_FOUND - id over 9 ]\n");
         NOT_FOUND_ASYNC(responseBuffer, responseReady);
+        return ERROR;
     }
 
     dbRequestBuffer[0] = 'r';
@@ -146,7 +154,7 @@ int deserializePostRequest(char* request, int requestSize, char* dbRequestBuffer
     if (id == ERROR) {
         log("[ NOT_FOUND - id over 9 ]\n");
         NOT_FOUND_ASYNC(responseBuffer, responseReady);
-        return SUCCESS;
+        return ERROR;
     }
 
     Transaction transaction;
@@ -154,7 +162,7 @@ int deserializePostRequest(char* request, int requestSize, char* dbRequestBuffer
     if (parseResult == ERROR) {
         log("[ Unprocessable Entity - Failed to get body ]\n");
         UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady);
-        return SUCCESS;
+        return ERROR;
     }
 
     // 'u' id(binNum) tipo('c' ou 'd') valor(binNum) descricao(char[DESCRIPTION_SIZE])
@@ -178,6 +186,8 @@ int deserializePostRequest(char* request, int requestSize, char* dbRequestBuffer
 // Deserializes db response, serializes client response
 int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod requestMethod, char responseBuffer[], char* responseReady) {
     if (dbResponseSize == -1) {
+        log("[ Internal Server Error - Reading response from db ]\n");
+        INTERNAL_SERVER_ERROR_ASYNC(responseBuffer, responseReady);
         return ERROR;
     }
 
@@ -185,7 +195,7 @@ int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod req
         if (requestMethod == GET) {
             NOT_FOUND_ASYNC(responseBuffer, responseReady);
         } else {
-            int transactionResult = dbResponse[0] - '0';
+            int transactionResult = -(dbResponse[0] - '0');
             if (transactionResult == ERROR) {
                 log("[ Internal Server Error - Locking file ]\n");
                 INTERNAL_SERVER_ERROR_ASYNC(responseBuffer, responseReady);
@@ -195,6 +205,9 @@ int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod req
             } else if (transactionResult == LIMIT_EXCEEDED_ERROR || transactionResult == INVALID_TIPO_ERROR) {
                 log("[ Unprocessable entity - LIMIT OR TIPO ]\n");
                 UNPROCESSABLE_ENTITY_ASYNC(responseBuffer, responseReady);
+            } else {
+                log("[ Internal Server Error - Unknown error %d]\n", transactionResult);
+                INTERNAL_SERVER_ERROR_ASYNC(responseBuffer, responseReady);
             }
         }
         return SUCCESS;
@@ -209,7 +222,7 @@ int serializeClientResponse(char* dbResponse, int dbResponseSize, HttpMethod req
     if (requestMethod == POST) {
         serializePostResponse(&user, responseBuffer);
     }
-    log("[ %s ]\n", responseBuffer);
+    log("respond: [ %s ]\n", responseBuffer);
     return SUCCESS;
 }
 

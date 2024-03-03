@@ -11,12 +11,12 @@
 // #define SERVER_PORT 9999
 // max connections waiting to be accepted
 #define SERVER_BACKLOG 1000
-// 64B
-#define SOCKET_READ_SIZE 64
-// 64B
-#define RESPONSE_SIZE 64
-// 64B
-#define RESPONSE_BODY_SIZE 64
+// 1KB
+#define SOCKET_READ_SIZE 1024
+// 1KB
+#define RESPONSE_SIZE 1024
+// 1KB
+#define RESPONSE_BODY_SIZE 1024
 
 #ifdef LOGGING
 #define logRequest(request, requestSize)    \
@@ -92,7 +92,7 @@ int handleRequest(char* request, int requestSize, char responseBuffer[], int* re
     if (request[0] == '0') {
         strcpy(responseBuffer, "0 close");
         *responseSize = 8;
-        return SUCCESS;
+        return END_CONNECTION;
     }
 
     bool recognizedMethod = false;
@@ -149,6 +149,7 @@ int handleRequest(char* request, int requestSize, char responseBuffer[], int* re
         getCurrentTimeStr(transaction.realizada_em);
 
         int updateUserResult = updateUserWithTransaction(id, &transaction, &user);
+        log("{ Update user result: %d }\n", updateUserResult);
         responseBuffer[0] = (updateUserResult * -1) + '0';
         responseBuffer[1] = ' ';
         *responseSize = 2;

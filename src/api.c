@@ -1,14 +1,23 @@
 #include "httpHandler.h"
 
-int serverSocket, dbSocket;
+int serverSocket;
+
+void cleanup() {
+    close(serverSocket);
+}
 
 // For profiling even if the server closes from a ctrl+c signal
 void sigIntHandler(int signum) {
     printf("{ Caught signal %d }\n", signum);
-    close(dbSocket);
-    close(serverSocket);
+    cleanup();
     exit(EXIT_SUCCESS);
 }
+
+typedef enum SocketType {
+    CLOSED,
+    CLIENT,
+    DB,
+} SocketType;
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -19,13 +28,7 @@ int main(int argc, char* argv[]) {
     const int SERVER_PORT = atoi(argv[1]);
     const int DB_PORT = atoi(argv[2]);
 
-    log("{ connecting to db }\n");
-    dbSocket = connectToDb(DB_PORT);
-    if (dbSocket == ERROR) {
-        log("{ Error connecting to db }\n");
-        return ERROR;
-    }
-    log("connected to db on port %d\n", DB_PORT);
+    // log("connected to db on port %d\n", DB_PORT);
 
     serverSocket = setupServer(SERVER_PORT, SERVER_BACKLOG);
     signal(SIGINT, sigIntHandler);
@@ -35,15 +38,16 @@ int main(int argc, char* argv[]) {
     log("{ FD_SETSIZE: %d }\n", FD_SETSIZE);
 
     // Set of socket descriptors
-    fd_set currentReadSockets, currentWriteSockets, readSockets, writeSockets;
+    fd_set currentReadSockets, currentWriteSockets;
+
+    // set used on selects
+    fd_set readSockets, writeSockets;
 
     // Initialize the set of active sockets
     FD_ZERO(&currentReadSockets);
     FD_SET(serverSocket, &currentReadSockets);
 
     FD_ZERO(&currentWriteSockets);
-    FD_SET(dbSocket, &currentWriteSockets);
-    FD_SET(dbSocket, &currentReadSockets);
 
     char responseBuffers[FD_SETSIZE][RESPONSE_SIZE] = {0};
     char responseReady[FD_SETSIZE] = {0};
@@ -56,14 +60,29 @@ int main(int argc, char* argv[]) {
 
     char dbResponseReady[FD_SETSIZE] = {0};
 
+    int clientDbSocket[FD_SETSIZE];
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        clientDbSocket[i] = -1;
+    }
+
+    int dbClientSocket[FD_SETSIZE];
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        dbClientSocket[i] = -1;
+    }
+
+    SocketType socketType[FD_SETSIZE];
+
     char shouldClose[FD_SETSIZE] = {0};
+
+    int selectResult;
 
     while (true) {
         readSockets = currentReadSockets;
         writeSockets = currentWriteSockets;
 
         // Wait for an activity on one of the sockets
-        if (select(FD_SETSIZE, &readSockets, &writeSockets, NULL, NULL) < 0) {
+        selectResult = select(FD_SETSIZE, &readSockets, &writeSockets, NULL, NULL);
+        if (selectResult < 0) {
             printf("Select failed");
             return ERROR;
         }
@@ -74,17 +93,35 @@ int main(int argc, char* argv[]) {
             socklen_t clientAddressSize = sizeof(clientAddress);
             int clientSocket = accept(serverSocket, (SA*)&clientAddress, &clientAddressSize);
             FD_SET(clientSocket, &currentReadSockets);
+            socketType[clientSocket] = CLIENT;
         }
 
         // Check all sockets for activity
-        for (int clientSocket = 0; clientSocket < FD_SETSIZE; clientSocket++) {
-            if (clientSocket == serverSocket || clientSocket == dbSocket) {
+        for (int socket = 0; socket < FD_SETSIZE; socket++) {
+            if (selectResult == 0) {
+                break;
+            }
+            if (socketType[socket] == CLOSED) {
                 continue;
+            }
+            int clientSocket = -1, dbSocket = -1;
+            if (socketType[socket] == CLIENT) {
+                clientSocket = socket;
+                dbSocket = clientDbSocket[clientSocket];
+            }
+            if (socketType[socket] == DB) {
+                dbSocket = socket;
+                clientSocket = dbClientSocket[dbSocket];
             }
 
             // read client recv buffer and serialize request to db
             bool shouldReadRequestFromClient = dbRequestReady[clientSocket] == 0 && shouldClose[clientSocket] == 0;
             if (shouldReadRequestFromClient && FD_ISSET(clientSocket, &readSockets)) {
+                if (clientDbSocket[clientSocket] == -1) {
+                    dbSocket = clientDbSocket[clientSocket] = connectToDb(DB_PORT);
+                    socketType[dbSocket] = DB;
+                    dbClientSocket[dbSocket] = clientSocket;
+                }
                 char request[SOCKET_READ_SIZE];
                 int bytesRead = recv(clientSocket, request, sizeof(request), SEND_DEFAULT);
 
@@ -98,24 +135,24 @@ int main(int argc, char* argv[]) {
                         &requestMethod[clientSocket],
                         responseBuffers[clientSocket],
                         &responseReady[clientSocket]);
+
+                    FD_CLR(clientSocket, &currentReadSockets);
+
+                    // Early return in case response can be determined without db request
                     if (serializeDbResult == ERROR) {
                         log("{ Error reading request }\n");
-                        shouldClose[clientSocket] = 1;
+                        dbRequestReady[clientSocket] = 1;
+                        dbResponseReady[clientSocket] = 1;
+                        FD_SET(clientSocket, &currentWriteSockets);
+                        responseSize[clientSocket] = strlen(responseBuffers[clientSocket]);
                     } else {
-                        log("{ Request read }\n");
-                        // Early return in case response can be determined without db request
-                        FD_CLR(clientSocket, &currentReadSockets);
-                        if (responseReady[clientSocket] == 1) {
-                            dbRequestReady[clientSocket] = 1;
-                            dbResponseReady[clientSocket] = 1;
-                            responseSize[clientSocket] = strlen(responseBuffers[clientSocket]);
-                        } else {
-                            dbRequestReady[clientSocket] = 1;
-                            dbRequestSize[clientSocket] = strlen(dbRequestBuffers[clientSocket]);
-                        }
+                        log("{ Request read on %d [ %s ] }\n", clientSocket, request);
+                        FD_SET(dbSocket, &currentWriteSockets);
+                        dbRequestReady[clientSocket] = 1;
+                        dbRequestSize[clientSocket] = strlen(dbRequestBuffers[clientSocket]);
                     }
+                    continue;
                 }
-                continue;
             }
 
             // send request to db
@@ -123,10 +160,12 @@ int main(int argc, char* argv[]) {
             if (shouldSendRequestToDb && FD_ISSET(dbSocket, &writeSockets)) {
                 int sendDbRequestResult = send(dbSocket, dbRequestBuffers[clientSocket], dbRequestSize[clientSocket], SEND_DEFAULT);
                 if (sendDbRequestResult == ERROR) {
-                    log("{ Error sending request to db }\n");
+                    log("{ Error sending request to db %d, %d }\n", sendDbRequestResult, errno);
                 }
-                log("{ Sent request to db }");
+                log("{ Sent request to db (%d) }\n", sendDbRequestResult);
                 dbResponseReady[clientSocket] = 1;
+                FD_CLR(dbSocket, &currentWriteSockets);
+                FD_SET(dbSocket, &currentReadSockets);
                 continue;
             }
 
@@ -137,7 +176,13 @@ int main(int argc, char* argv[]) {
                 int bytesRead = recv(dbSocket, dbResponse, sizeof(dbResponse), SEND_DEFAULT);
 
                 if (bytesRead >= 1 && bytesRead < DB_RESPONSE_SIZE) {
+                    log("{ read bytes %d for %d }\n", bytesRead, clientSocket);
                     dbResponse[bytesRead] = '\0';
+                    log("[ ");
+                    for (int i = 0; i < bytesRead; i++) {
+                        log("'%c'", dbResponse[i]);
+                    }
+                    log("]\n");
                     int serializeResponseResult = serializeClientResponse(
                         dbResponse,
                         bytesRead,
@@ -153,22 +198,27 @@ int main(int argc, char* argv[]) {
                         responseSize[clientSocket] = strlen(responseBuffers[clientSocket]);
                     }
 
+                    FD_CLR(dbSocket, &currentReadSockets);
                     FD_SET(clientSocket, &currentWriteSockets);
+                } else {
+                    printf("Receive returned %d\n", bytesRead);
+                    exit(ERROR);
                 }
                 continue;
             }
 
             // send response to client and set the connection to close
             bool shouldSendResponseToClient = responseReady[clientSocket] == 1 && shouldClose[clientSocket] == 0;
-            if (FD_ISSET(clientSocket, &writeSockets) && shouldSendResponseToClient) {
+            if (shouldSendResponseToClient && FD_ISSET(clientSocket, &writeSockets)) {
                 int sendResult = send(clientSocket, responseBuffers[clientSocket], responseSize[clientSocket], SEND_DEFAULT);
                 if (sendResult == ERROR) {
                     log("{ Error sending response }\n");
                 } else {
-                    log("{ Sent response [ %s ] }\n", responseBuffers[clientSocket]);
+                    log("{ Sent response [ %s ] on socket %d }\n", responseBuffers[clientSocket], clientSocket);
                 }
                 shouldClose[clientSocket] = 1;
                 FD_CLR(clientSocket, &currentWriteSockets);
+                continue;
             }
 
             // close connection with client if it's done
@@ -177,13 +227,20 @@ int main(int argc, char* argv[]) {
                 dbRequestReady[clientSocket] = 0;
                 dbResponseReady[clientSocket] = 0;
                 shouldClose[clientSocket] = 0;
+                socketType[clientSocket] = CLOSED;
+
+                if (dbSocket != -1) {
+                    socketType[dbSocket] = CLOSED;
+                    dbClientSocket[dbSocket] = -1;
+                    close(dbSocket);
+                    clientDbSocket[clientSocket] = -1;
+                }
                 close(clientSocket);
-                log("{ Closed client connection }\n");
+                log("{ Closed client connection %d }\n", clientSocket);
             }
         }
     }
 
-    close(dbSocket);
-    close(serverSocket);
+    cleanup();
     return EXIT_SUCCESS;
 }

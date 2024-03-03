@@ -59,8 +59,9 @@ int main(int argc, char* argv[]) {
         readyWriteSockets = currentWriteSockets;
 
         // Wait for an activity on one of the sockets
-        if (select(FD_SETSIZE, &readyReadSockets, &readyWriteSockets, NULL, NULL) < 0) {
-            printf("Select failed");
+        int selectResult = select(FD_SETSIZE, &readyReadSockets, &readyWriteSockets, NULL, NULL);
+        if (selectResult < 0) {
+            printf("Select failed %d, %d\n", selectResult, errno);
             return ERROR;
         }
 
@@ -84,8 +85,8 @@ int main(int argc, char* argv[]) {
                 int bytesRead = recv(clientSocket, requestBuffers[clientSocket], sizeof(requestBuffers[clientSocket]), SEND_DEFAULT);
                 log("{ Read request from client %d }\n", clientSocket);
                 logRequest(requestBuffers[clientSocket], bytesRead);
+                FD_CLR(clientSocket, &currentReadSockets);
                 if (bytesRead >= 1 && bytesRead < SOCKET_READ_SIZE) {
-                    FD_CLR(clientSocket, &currentReadSockets);
                     requestBuffers[clientSocket][bytesRead] = '\0';
                     requestSize[clientSocket] = bytesRead;
                     // client requested to close connection
@@ -93,26 +94,39 @@ int main(int argc, char* argv[]) {
                         shouldClose = true;
                     } else {
                         requestRead[clientSocket] = 1;
-                        handleRequest(
+                        int result = handleRequest(
                             requestBuffers[clientSocket],
                             requestSize[clientSocket],
                             responseBuffers[clientSocket],
                             &responseSize[clientSocket]);
-                        FD_SET(clientSocket, &currentWriteSockets);
-                        continue;
+                        if (result == SUCCESS) {
+                            FD_SET(clientSocket, &currentWriteSockets);
+                            continue;
+                        } else {
+                            log("{ Client closed connection }\n");
+                            shouldClose = true;
+                        }
                     }
+                } else if (bytesRead == 0) {
+                    log("{ Client closed }\n");
+                    shouldClose = true;
                 }
+                continue;
             }
-            if (readRequest == 1 && FD_ISSET(clientSocket, &readyWriteSockets)) {
+            if (readRequest == 1 && shouldClose == false && FD_ISSET(clientSocket, &readyWriteSockets)) {
                 int sentResult = send(clientSocket, responseBuffers[clientSocket], responseSize[clientSocket], SEND_DEFAULT);
                 if (sentResult == ERROR) {
                     log("{ Error sending response }\n");
                 } else {
                     log("{ Request handled }\n");
+                    log("{ Sent: ");
+                    logRequest(responseBuffers[clientSocket], responseSize[clientSocket]);
+                    log("}");
                 }
                 requestRead[clientSocket] = 0;
                 FD_CLR(clientSocket, &currentWriteSockets);
-                FD_SET(clientSocket, &currentReadSockets);
+                shouldClose = true;
+                continue;
             }
 
             if (shouldClose) {
@@ -121,7 +135,6 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-
     closeDBFiles();
     close(serverSocket);
     return EXIT_SUCCESS;

@@ -23,7 +23,7 @@
 #include <unistd.h>
 
 // Comment out to enable logging on the server and the db
-#define LOGGING 1
+// #define LOGGING 1
 
 // Debug flags
 #ifdef LOGGING
