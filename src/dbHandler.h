@@ -71,8 +71,10 @@ const char requestUnknown[] = "1 - Unknown request\n\n";
 #define REQUEST_UNKNOWN(clientSocket) STATIC_RESPONSE(clientSocket, requestUnknown)
 
 int handleRequest(char* request, int requestSize, int clientSocket) {
+#ifdef LOGGING
     char reqTime[DATE_SIZE];
     getCurrentTimeStr(reqTime);
+#endif
 
     if (requestSize < 1) {
         log("{ %s - Empty request }\n", reqTime);
